@@ -1,0 +1,42 @@
+name: Test
+on:
+  pull_request:
+    paths:
+      - .github/**
+      - src/**
+      - "*.json"
+      - vite*.ts
+  push:
+    branches:
+      - main
+    paths:
+      - .github/**
+      - src/**
+      - "*.json"
+      - vite*.ts
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm clean-install
+      - run: npx playwright install --with-deps chromium
+      - run: npx biome ci .
+      - run: npm run test
+      - run: npm run build
+
+      # - name: Report Coverage
+      #   uses: codacy/codacy-coverage-reporter-action@v1.3.0
+      #   with:
+      #     project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+      #     coverage-reports: ./coverage/lcov.info

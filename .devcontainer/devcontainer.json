@@ -1,0 +1,12 @@
+{
+	"name": "lesomnus-tar-ts",
+	"build": {
+		"dockerfile": "Dockerfile",
+		"context": "."
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": ["biomejs.biome", "vitest.explorer", "streetsidesoftware.code-spell-checker"]
+		}
+	}
+}

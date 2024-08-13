@@ -90,6 +90,7 @@ export interface Writer {
 }
 
 export interface Reader extends AsyncIterable<ReadResult> {
+	// Gets next file. It releases lock of previous file reader.
 	next(): Promise<IteratorResult<ReadResult, undefined>>
 	close(): Promise<void>
 }

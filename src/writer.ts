@@ -15,12 +15,10 @@ export abstract class WriterBase implements Writer {
 
 	abstract close(): Promise<void>
 
-	writeFile(content: string, header: InputHeader): Promise<void>
-	writeFile(data: BufferSource, header: InputHeader): Promise<void>
 	writeFile(file: File, header?: Partial<InputHeader>): Promise<void>
-	writeFile(blob: Blob, header: InputHeader): Promise<void>
 	writeFile(stream: ReadableStream<Uint8Array>, header: Header): Promise<void>
-	writeFile(body: string | BufferSource | File | Blob | ReadableStream<Uint8Array>, header?: Partial<InputHeader>): Promise<void> {
+	writeFile(data: string | BufferSource | Blob, header: InputHeader): Promise<void>
+	writeFile(body: string | BufferSource | Blob | File | ReadableStream<Uint8Array>, header?: Partial<InputHeader>): Promise<void> {
 		if (body instanceof ReadableStream) {
 			return this.next(header as Header).then(ws => body.pipeTo(ws))
 		}

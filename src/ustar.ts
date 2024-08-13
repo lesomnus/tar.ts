@@ -71,6 +71,7 @@ export class UstarReader extends ReaderBase {
 	#r: ReadableStreamBYOBReader
 
 	#lastData: Pick<ReadableStream<Uint8Array>, 'locked' | 'cancel'>
+	#dataLock: { releaseLock(): void }
 	#work: Promise<void>
 
 	constructor(r: ReadableStream<Uint8Array>) {
@@ -80,12 +81,13 @@ export class UstarReader extends ReaderBase {
 			locked: false,
 			cancel: () => Promise.resolve(),
 		}
+		this.#dataLock = { releaseLock() {} }
 		this.#work = Promise.resolve()
 	}
 
 	async next(): Promise<IteratorResult<ReadResult, undefined>> {
 		if (this.#lastData.locked) {
-			throw new Error('last file must be unlocked')
+			this.#dataLock.releaseLock()
 		}
 
 		// Wait until cursor moved to the next header block.
@@ -105,14 +107,25 @@ export class UstarReader extends ReaderBase {
 
 		h.path = h.prefix === '' ? h.path : `${h.prefix}/${h.path}`
 
+		//         remain   pad
+		//       |<------>|<--->|
+		// ......|........|.....|
+		//       ^        ^     ^
+		//  cursor    file-end  block-end
+		//
+		// `remain` can be negative if "cursor" in the between of "file-end" and "block-end"
+		// so "cursor" + `remain` + `pad` always be "block-end".
+
 		let canceled = false
 		let remain = h.size
-		const pad = C.BlockSize - ((h.size + C.BlockSize) & ~C.BlockSize)
+		const pad = C.BlockSize - ((h.size % C.BlockSize) % C.BlockSize)
 		const read = async (ctrl: ReadableStreamController<Uint8Array>) => {
 			if (remain < 1 || canceled) {
+				// By reading `l` bytes, "cursor" == "block-end".
 				const l = remain + pad
 				if (l < 0) throw new Error('logic error: over-read')
 				if (l > 0) {
+					// TODO: read partially if `l` too high.
 					const { done, value } = await this.#r.read(new Uint8Array(l))
 					if (done) {
 						ctrl.error(new Error('unexpected end of file'))
@@ -129,12 +142,8 @@ export class UstarReader extends ReaderBase {
 				}
 				return
 			}
-			if ('byobRequest' in ctrl) {
+			if ('byobRequest' in ctrl && ctrl.byobRequest !== null) {
 				const req = ctrl.byobRequest
-				if (req === null) {
-					return
-				}
-
 				const view = req.view
 				if (view === null) throw new Error('assert: view must not be null before respond')
 
@@ -147,13 +156,16 @@ export class UstarReader extends ReaderBase {
 				}
 
 				const bytesRead = value.byteLength
-				req.respondWithNewView(value.subarray(0, Math.min(bytesRead, remain)))
+				const fileData = value.subarray(0, Math.min(bytesRead, remain)) // remove bytes in pad.
+				req.respondWithNewView(fileData)
 				remain -= bytesRead
 			} else {
 				if (ctrl.desiredSize === null) throw new Error('assert: when it be null?')
-				if (ctrl.desiredSize <= 0) return
 
-				const l = Math.min(ctrl.desiredSize, remain + pad)
+				let l = remain + pad
+				if (ctrl.desiredSize > 0) {
+					l = Math.min(ctrl.desiredSize, l)
+				}
 				const d = new Uint8Array(l)
 				const { done, value } = await this.#r.read(d)
 				if (done) {
@@ -162,8 +174,11 @@ export class UstarReader extends ReaderBase {
 				}
 
 				const bytesRead = value.byteLength
-				ctrl.enqueue(value.subarray(0, Math.min(ctrl.desiredSize, remain)))
+				const fileReadSize = Math.min(bytesRead, remain)
 				remain -= bytesRead
+
+				ctrl.enqueue(value.subarray(0, fileReadSize))
+				if (ctrl.desiredSize <= 0) return
 			}
 
 			return read(ctrl)
@@ -198,6 +213,12 @@ export class UstarReader extends ReaderBase {
 			},
 		})
 		this.#lastData = data
+		const getReader = data.getReader.bind(data)
+		data.getReader = (options => {
+			const r = getReader(options)
+			this.#dataLock = r
+			return r
+		}) as typeof getReader
 
 		return { done: false, value: { ...h, data } }
 	}

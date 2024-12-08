@@ -1,3 +1,5 @@
+import io from '@lesomnus/io'
+
 import C from './constant'
 import { ReaderBase } from './reader'
 import { type FileHeader, type OptionalHeader, Perm, type ReadResult } from './types'
@@ -20,7 +22,7 @@ export class UstarWriter extends WriterBase {
 
 		const block = new Uint8Array(C.BlockSize)
 		const m = util.useMarshal(block)
-		const enc = util.useTextEncoder()
+		const enc = util.useTextEncode()
 
 		m(100, d => enc(name, d))
 		m(8, d => enc(str(h.mode, 7), d))
@@ -68,7 +70,7 @@ export class UstarWriter extends WriterBase {
 }
 
 export class UstarReader extends ReaderBase {
-	#r: ReadableStreamBYOBReader
+	#r: io.Reader & io.Closer
 
 	#lastData: Pick<ReadableStream<Uint8Array>, 'locked' | 'cancel'>
 	#dataLock: { releaseLock(): void }
@@ -76,7 +78,7 @@ export class UstarReader extends ReaderBase {
 
 	constructor(r: ReadableStream<Uint8Array>) {
 		super()
-		this.#r = r.getReader({ mode: 'byob' })
+		this.#r = io.fromReadableStream(r)
 		this.#lastData = {
 			locked: false,
 			cancel: () => Promise.resolve(),
@@ -93,13 +95,10 @@ export class UstarReader extends ReaderBase {
 		// Wait until cursor moved to the next header block.
 		await this.#lastData.cancel()
 
-		const block = new Uint8Array(C.BlockSize)
-		const { done, value } = await this.#r.read(block)
-		if (done) {
-			return { done: true, value: undefined }
-		}
+		const block = io.make(C.BlockSize)
+		await io.readFull(this.#r, block)
 
-		const h = util.parseHeader(value)
+		const h = util.parseHeader(block.data)
 		if (h === null) {
 			// Assume it is end of the tar (two empty blocks).
 			return { done: true, value: undefined }
@@ -125,15 +124,9 @@ export class UstarReader extends ReaderBase {
 				const l = remain + pad
 				if (l < 0) throw new Error('logic error: over-read')
 				if (l > 0) {
-					// TODO: read partially if `l` too high.
-					const { done, value } = await this.#r.read(new Uint8Array(l))
-					if (done) {
-						ctrl.error(new Error('unexpected end of file'))
-						return
-					}
-
-					// TODO: handle partial read?
-					remain -= value.byteLength
+					const r = new io.LimitedReader(this.#r, l)
+					const n = await io.copy(io.discard, r)
+					remain -= n
 				}
 
 				if (!canceled) {
@@ -148,17 +141,17 @@ export class UstarReader extends ReaderBase {
 				if (view === null) throw new Error('assert: view must not be null before respond')
 
 				const l = Math.min(view.byteLength, remain + pad)
-				const d = new Uint8Array(view.buffer, view.byteOffset, l)
-				const { done, value } = await this.#r.read(d)
-				if (done) {
+				const b = new io.Buff(view.buffer, view.byteOffset, l)
+				const n = await this.#r.read(b)
+				if (!n) {
 					ctrl.error(new Error('unexpected end of file'))
 					return
 				}
 
-				const bytesRead = value.byteLength
-				const fileData = value.subarray(0, Math.min(bytesRead, remain)) // remove bytes in pad.
-				req.respondWithNewView(fileData)
-				remain -= bytesRead
+				const fileReadSize = Math.min(n, remain)
+				remain -= n
+
+				req.respondWithNewView(b.subbuff(0, fileReadSize).data)
 			} else {
 				if (ctrl.desiredSize === null) throw new Error('assert: when it be null?')
 
@@ -166,18 +159,18 @@ export class UstarReader extends ReaderBase {
 				if (ctrl.desiredSize > 0) {
 					l = Math.min(ctrl.desiredSize, l)
 				}
-				const d = new Uint8Array(l)
-				const { done, value } = await this.#r.read(d)
-				if (done) {
+
+				const b = io.make(l)
+				const n = await this.#r.read(b)
+				if (!n) {
 					ctrl.error(new Error('unexpected end of file'))
 					return
 				}
 
-				const bytesRead = value.byteLength
-				const fileReadSize = Math.min(bytesRead, remain)
-				remain -= bytesRead
+				const fileReadSize = Math.min(n, remain)
+				remain -= n
 
-				ctrl.enqueue(value.subarray(0, fileReadSize))
+				ctrl.enqueue(b.subbuff(0, fileReadSize).data)
 				if (ctrl.desiredSize <= 0) return
 			}
 
@@ -225,7 +218,7 @@ export class UstarReader extends ReaderBase {
 
 	close(): Promise<void> {
 		this.#work = this.#work.then(() => {
-			this.#r.releaseLock()
+			this.#r.close()
 		})
 		return this.#work
 	}

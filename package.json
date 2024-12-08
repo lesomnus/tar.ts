@@ -8,7 +8,11 @@
 	},
 	"license": "Apache-2.0",
 	"type": "module",
-	"files": ["dist", "src", "!src/**/*.test.ts"],
+	"files": [
+		"dist",
+		"src",
+		"!src/**/*.test.ts"
+	],
 	"main": "./dist/main.cjs.js",
 	"module": "./dist/main.js",
 	"exports": {
@@ -38,5 +42,8 @@
 		"vite-tsconfig-paths": "^5.0.0",
 		"vitest": "^2.0.3",
 		"zx": "^8.1.4"
+	},
+	"dependencies": {
+		"@lesomnus/io": "file:lesomnus-io-0.1.0.tgz"
 	}
 }

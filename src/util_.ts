@@ -17,7 +17,7 @@ export function trim(v: string): string {
 	return v.trim()
 }
 
-export function useTextEncoder() {
+export function useTextEncode() {
 	const v = new TextEncoder()
 	return v.encodeInto.bind(v)
 }
